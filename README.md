@@ -1,2 +1,32 @@
-# Warehouse_manager
-Warehouse manager for Zhicheng College, Sustech
+# 仓库物资管理系统
+
+本项目是一个基于 Tkinter 的简单仓库物资管理小程序，支持物资的增删查、出库、搜索、排序和导出为 Excel。
+
+## 功能
+- 显示所有物资（表格展示，支持搜索和排序）
+- 添加物资（弹窗输入物品编号、名称、所属组织、数量、入库日期）
+- 出库（支持完全出库和部分出库）
+- 数量直接调整（选中物品后可使用"+"、"-"按钮或直接输入修改数量）
+- 导出为 Excel
+- 数据持久化存储
+
+## 依赖
+- Python 3.7+
+- tkinter（标准库自带）
+- openpyxl（用于 Excel 导出）
+- json（标准库自带，用于数据存储）
+
+## 安装依赖
+```sh
+pip install openpyxl
+```
+
+## 运行
+```sh
+python main.py
+```
+
+## 文件说明
+- main.py：主程序文件，包含全部功能
+- data/：数据存储目录，保存仓库物资信息
+- output/：默认的Excel导出目录

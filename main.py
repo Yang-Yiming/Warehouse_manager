@@ -14,6 +14,9 @@ class WarehouseManager:
         # 初始化路径
         self.init_paths()
         
+        # 加载配置
+        self.load_config()
+        
         # 加载数据
         self.load_data()
         
@@ -25,11 +28,26 @@ class WarehouseManager:
         self.data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
         self.output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
         self.data_file = os.path.join(self.data_dir, 'warehouse_data.json')
+        self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
         
         # 确保目录存在
         for directory in [self.data_dir, self.output_dir]:
             if not os.path.exists(directory):
                 os.makedirs(directory)
+                
+    def load_config(self):
+        """加载配置文件"""
+        self.organizations = []
+        self.labels = []
+        
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    self.organizations = config.get('organization', {}).get('val', [])
+                    self.labels = config.get('labels', {}).get('val', [])
+            except Exception as e:
+                messagebox.showerror('配置加载错误', f'无法加载配置: {str(e)}')
                 
     def load_data(self):
         """从文件加载数据"""
@@ -79,13 +97,16 @@ class WarehouseManager:
 
     def create_table(self):
         """创建数据表格"""
-        columns = ('编号', '名称', '所属组织', '数量', '入库日期')
+        columns = ('编号', '名称', '所属组织', '数量', '入库日期', '标签')
         self.tree = ttk.Treeview(self.root, columns=columns, show='headings')
         
         # 配置列
         for col in columns:
             self.tree.heading(col, text=col, command=lambda c=col: self.sort_by(c, False))
-            self.tree.column(col, width=100)
+            if col == '标签':
+                self.tree.column(col, width=150)  # 标签列宽设置大一些
+            else:
+                self.tree.column(col, width=100)
         
         # 添加滚动条
         scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=self.tree.yview)
@@ -207,10 +228,14 @@ class WarehouseManager:
             
         # 重新填充表格
         for item in self.data:
+            # 兼容没有标签字段的旧数据
+            tags = item.get('标签', [])
+            tags_str = ", ".join(tags)
+            
             if any(search in str(v).lower() for v in item.values()):
                 self.tree.insert('', tk.END, values=(
                     item['编号'], item['名称'], item['所属组织'], 
-                    item['数量'], item['入库日期']))
+                    item['数量'], item['入库日期'], tags_str))
     
     def generate_new_id(self):
         """生成新的两位数字编号（01-99）"""
@@ -229,18 +254,46 @@ class WarehouseManager:
         """打开添加物资对话框"""
         win = tk.Toplevel(self.root)
         win.title('添加物资')
+        win.geometry('400x500')  # 增加窗口大小以容纳标签选择
         
-        # 创建输入字段
-        labels = ['编号', '名称', '所属组织', '数量', '入库日期(YYYY-MM-DD)']
-        entries = []
+        # 创建基本字段
+        tk.Label(win, text='编号').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        entry_id = tk.Entry(win)
+        entry_id.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
         
-        for i, label in enumerate(labels):
-            tk.Label(win, text=label).grid(row=i, column=0, padx=5, pady=5)
-            entry = tk.Entry(win)
-            entry.grid(row=i, column=1, padx=5, pady=5)
-            entries.append(entry)
-            
-        entry_id, entry_name, entry_org, entry_count, entry_date = entries
+        tk.Label(win, text='名称').grid(row=1, column=0, padx=5, pady=5, sticky='w')
+        entry_name = tk.Entry(win)
+        entry_name.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
+        
+        tk.Label(win, text='所属组织').grid(row=2, column=0, padx=5, pady=5, sticky='w')
+        # 使用下拉列表选择组织
+        org_var = tk.StringVar()
+        if self.organizations:
+            org_var.set(self.organizations[0])
+        org_dropdown = ttk.Combobox(win, textvariable=org_var, values=self.organizations, state="readonly")
+        org_dropdown.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
+        
+        tk.Label(win, text='数量').grid(row=3, column=0, padx=5, pady=5, sticky='w')
+        entry_count = tk.Entry(win)
+        entry_count.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
+        
+        tk.Label(win, text='入库日期(YYYY-MM-DD)').grid(row=4, column=0, padx=5, pady=5, sticky='w')
+        entry_date = tk.Entry(win)
+        entry_date.grid(row=4, column=1, padx=5, pady=5, sticky='ew')
+        
+        # 标签选择
+        tk.Label(win, text='物品标签 (可多选)').grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky='w')
+        
+        # 创建标签复选框
+        label_frame = tk.Frame(win)
+        label_frame.grid(row=6, column=0, columnspan=2, padx=5, pady=5, sticky='ew')
+        
+        label_vars = []
+        for i, label in enumerate(self.labels):
+            var = tk.BooleanVar()
+            cb = tk.Checkbutton(label_frame, text=label, variable=var)
+            cb.grid(row=i//2, column=i%2, sticky='w')
+            label_vars.append((label, var))
         
         # 自动生成编号并填入
         new_id = self.generate_new_id()
@@ -253,10 +306,10 @@ class WarehouseManager:
         # 保存按钮
         tk.Button(win, text='保存', 
                  command=lambda: self.save_new_item(win, entry_id, entry_name, 
-                                                   entry_org, entry_count, entry_date)
-                ).grid(row=len(labels), column=0, columnspan=2, pady=10)
+                                                   org_var, entry_count, entry_date, label_vars)
+                ).grid(row=7, column=0, columnspan=2, pady=10)
     
-    def save_new_item(self, win, entry_id, entry_name, entry_org, entry_count, entry_date):
+    def save_new_item(self, win, entry_id, entry_name, org_var, entry_count, entry_date, label_vars):
         """保存新添加的物资"""
         try:
             item_id = entry_id.get()
@@ -268,17 +321,21 @@ class WarehouseManager:
             if any(item['编号'] == item_id for item in self.data):
                 raise ValueError('编号已存在，请使用其他编号')
                 
+            # 获取选中的标签
+            selected_labels = [label for label, var in label_vars if var.get()]
+            
             item = {
                 '编号': item_id,
                 '名称': entry_name.get(),
-                '所属组织': entry_org.get(),
+                '所属组织': org_var.get(),
                 '数量': int(entry_count.get()),
-                '入库日期': entry_date.get()
+                '入库日期': entry_date.get(),
+                '标签': selected_labels
             }
             
             # 验证所有字段
             if not item['编号'] or not item['名称'] or not item['所属组织'] or not item['入库日期']:
-                raise ValueError('所有字段均为必填')
+                raise ValueError('编号、名称、所属组织和入库日期为必填项')
                 
             # 验证日期格式
             datetime.datetime.strptime(item['入库日期'], '%Y-%m-%d')
@@ -372,9 +429,12 @@ class WarehouseManager:
         """创建Excel文件"""
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.append(['编号', '名称', '所属组织', '数量', '入库日期'])
+        ws.append(['编号', '名称', '所属组织', '数量', '入库日期', '标签'])
         for item in self.data:
-            ws.append([item['编号'], item['名称'], item['所属组织'], item['数量'], item['入库日期']])
+            # 兼容没有标签字段的旧数据
+            tags = item.get('标签', [])
+            tags_str = ", ".join(tags)
+            ws.append([item['编号'], item['名称'], item['所属组织'], item['数量'], item['入库日期'], tags_str])
         wb.save(file_path)
         messagebox.showinfo('导出成功', f'数据已导出到 {file_path}')
 

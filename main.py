@@ -38,7 +38,6 @@ class WarehouseManager:
     def load_config(self):
         """加载配置文件"""
         self.organizations = []
-        self.labels = []
         self.operators = []
         
         if os.path.exists(self.config_file):
@@ -46,7 +45,6 @@ class WarehouseManager:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     self.organizations = config.get('organization', {}).get('val', [])
-                    self.labels = config.get('labels', {}).get('val', [])
                     self.operators = config.get('operators', {}).get('val', [])
             except Exception as e:
                 messagebox.showerror('配置加载错误', f'无法加载配置: {str(e)}')
@@ -56,14 +54,28 @@ class WarehouseManager:
         if os.path.exists(self.data_file):
             try:
                 with open(self.data_file, 'r', encoding='utf-8') as f:
-                    self.data = json.load(f)
-                # 确保旧数据兼容性：为没有操作记录的数据添加空操作记录
-                for item in self.data:
-                    if '操作记录' not in item:
-                        item['操作记录'] = []
+                    old_data = json.load(f)
+                
+                # 转换旧数据到新格式
+                self.data = []
+                for item in old_data:
+                    new_item = {
+                        "提交时间": item.get("提交时间", datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                        "物资编号": item.get('物资编号', ''),
+                        "物品名称": item.get('物品名称', ''),
+                        "物资操作": item.get('物资操作', '入库'),  # 默认为入库
+                        "所属组织": item.get('所属组织', ''),
+                        "物品数量": item.get('物品数量', 0),
+                        "时间": item.get('时间', ''),
+                        "操作人": item.get('操作人', ''),
+                        "提交者": item.get('提交者', '')
+                    }
+                    self.data.append(new_item)
+                
+                self.save_data()  # 保存转换后的数据
             except Exception as e:
                 messagebox.showerror('数据加载错误', f'无法加载数据: {str(e)}')
-                
+    
     def save_data(self):
         """保存数据到文件"""
         try:
@@ -77,7 +89,6 @@ class WarehouseManager:
         self.create_search_panel()
         self.create_button_panel()
         self.create_table()
-        self.create_quantity_panel()
         self.update_table()
     
     def create_search_panel(self):
@@ -97,20 +108,23 @@ class WarehouseManager:
         btn_frame = tk.Frame(self.root)
         btn_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        tk.Button(btn_frame, text='添加物资', command=self.add_item).pack(side=tk.LEFT)
-        tk.Button(btn_frame, text='出库', command=self.remove_item).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text='导出为Excel', command=self.export_excel).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text='入库', command=self.add_item).pack(side=tk.LEFT)
+        tk.Button(btn_frame, text='出库', command=lambda: self.remove_item('出库')).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text='物资增添', command=lambda: self.add_quantity('物资增添')).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text='部分出库', command=lambda: self.remove_item('部分出库')).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text='导入Excel', command=self.import_excel).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text='导出Excel', command=self.export_excel).pack(side=tk.LEFT, padx=5)
 
     def create_table(self):
         """创建数据表格"""
-        columns = ('编号', '名称', '所属组织', '数量', '入库日期', '标签', '最近操作者')
+        columns = ('物资编号', '物品名称', '物资操作', '所属组织', '物品数量', '时间', '操作人', '提交者', '提交时间')
         self.tree = ttk.Treeview(self.root, columns=columns, show='headings')
         
         # 配置列
         for col in columns:
             self.tree.heading(col, text=col, command=lambda c=col: self.sort_by(c, False))
-            if col in ['标签', '最近操作者']:
-                self.tree.column(col, width=150)  # 标签列宽设置大一些
+            if col in ['提交时间', '操作人', '提交者']:
+                self.tree.column(col, width=150)
             else:
                 self.tree.column(col, width=100)
         
@@ -120,208 +134,6 @@ class WarehouseManager:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # 绑定选择事件
-        self.tree.bind('<<TreeviewSelect>>', self.on_tree_select)
-        # 绑定双击事件以查看详细操作记录
-        self.tree.bind('<Double-1>', self.show_operation_history)
-
-    def show_operation_history(self, event):
-        """显示物品的操作历史记录"""
-        selected = self.tree.selection()
-        if not selected:
-            return
-            
-        idx = self.tree.index(selected[0])
-        item = self.data[idx]
-        
-        # 创建操作历史窗口
-        history_win = tk.Toplevel(self.root)
-        history_win.title(f"{item['名称']} - 操作历史")
-        history_win.geometry('600x400')
-        
-        # 创建表格显示操作历史
-        columns = ('操作时间', '操作者', '操作类型', '操作数量', '操作后数量')
-        history_tree = ttk.Treeview(history_win, columns=columns, show='headings')
-        
-        for col in columns:
-            history_tree.heading(col, text=col)
-            history_tree.column(col, width=100)
-        
-        # 添加滚动条
-        scrollbar = ttk.Scrollbar(history_win, orient="vertical", command=history_tree.yview)
-        history_tree.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        history_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
-        # 填充操作历史数据
-        if '操作记录' in item and item['操作记录']:
-            for record in reversed(item['操作记录']):  # 从新到旧显示
-                history_tree.insert('', tk.END, values=(
-                    record['时间'], record['操作者'], record['操作类型'], 
-                    record['操作数量'], record['操作后数量']
-                ))
-        else:
-            messagebox.showinfo('提示', '该物品暂无操作记录')
-            history_win.destroy()
-
-    def create_quantity_panel(self):
-        """创建数量操作面板"""
-        self.qty_frame = tk.Frame(self.root)
-        self.qty_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        tk.Label(self.qty_frame, text="数量操作:").pack(side=tk.LEFT)
-        
-        # 减号按钮
-        self.minus_btn = tk.Button(self.qty_frame, text="-", width=3, 
-                            command=lambda: self.change_quantity(-1))
-        self.minus_btn.pack(side=tk.LEFT, padx=5)
-        
-        # 数量编辑框
-        self.qty_var = tk.StringVar()
-        self.qty_entry = tk.Entry(self.qty_frame, textvariable=self.qty_var, width=8)
-        self.qty_entry.pack(side=tk.LEFT, padx=5)
-        self.qty_entry.bind('<Return>', lambda e: self.update_quantity_from_entry())
-        self.qty_entry.bind('<FocusOut>', lambda e: self.update_quantity_from_entry())
-        
-        # 加号按钮
-        self.plus_btn = tk.Button(self.qty_frame, text="+", width=3,
-                           command=lambda: self.change_quantity(1))
-        self.plus_btn.pack(side=tk.LEFT, padx=5)
-        
-        # 操作者输入框
-        tk.Label(self.qty_frame, text="操作者:").pack(side=tk.LEFT, padx=(20, 5))
-        self.operator_var = tk.StringVar()
-        
-        # 使用下拉列表选择操作者，但也允许手动输入
-        self.operator_entry = ttk.Combobox(self.qty_frame, textvariable=self.operator_var, 
-                                       values=self.operators, width=10)
-        self.operator_entry.pack(side=tk.LEFT, padx=5)
-        
-        # 初始禁用控件
-        self.disable_quantity_controls()
-
-    def on_tree_select(self, event):
-        """处理表格选择事件"""
-        selected = self.tree.selection()
-        if selected:
-            idx = self.tree.index(selected[0])
-            if idx < len(self.data):
-                item = self.data[idx]
-                self.enable_quantity_controls(item['数量'])
-            else:
-                self.disable_quantity_controls()
-        else:
-            self.disable_quantity_controls()
-    
-    def disable_quantity_controls(self):
-        """禁用数量操作控件"""
-        for widget in [self.minus_btn, self.qty_entry, self.plus_btn, self.operator_entry]:
-            widget.config(state=tk.DISABLED)
-        self.qty_var.set("")
-        self.operator_var.set("")
-    
-    def enable_quantity_controls(self, qty):
-        """启用数量操作控件并设置当前值"""
-        for widget in [self.minus_btn, self.qty_entry, self.plus_btn, self.operator_entry]:
-            widget.config(state=tk.NORMAL)
-        self.qty_var.set(str(qty))
-    
-    def validate_operator(self):
-        """验证操作者是否填写"""
-        operator = self.operator_var.get().strip()
-        if not operator:
-            messagebox.showwarning('提示', '请输入操作者姓名')
-            return False
-        return True
-    
-    def change_quantity(self, change_amount):
-        """增加或减少物品数量"""
-        selected = self.tree.selection()
-        if not selected:
-            return
-            
-        # 验证操作者是否填写
-        if not self.validate_operator():
-            return
-            
-        idx = self.tree.index(selected[0])
-        current_qty = self.data[idx]['数量']
-        new_qty = current_qty + change_amount
-        
-        # 确保数量不小于0
-        if new_qty < 0:
-            messagebox.showwarning('提示', '库存数量不能小于0')
-            return
-        
-        # 记录操作信息
-        operation_type = "增加" if change_amount > 0 else "减少"
-        self.add_operation_record(idx, self.operator_var.get(), operation_type, abs(change_amount), new_qty)
-            
-        self.data[idx]['数量'] = new_qty
-        self.save_data()
-        self.update_table()
-        
-        # 重新选择当前行
-        self.reselect_row(idx, new_qty)
-    
-    def update_quantity_from_entry(self):
-        """从输入框更新数量"""
-        selected = self.tree.selection()
-        if not selected:
-            return
-            
-        # 验证操作者是否填写
-        if not self.validate_operator():
-            return
-            
-        try:
-            new_qty = int(self.qty_var.get())
-            if new_qty < 0:
-                messagebox.showwarning('提示', '库存数量不能小于0')
-                return
-                
-            idx = self.tree.index(selected[0])
-            current_qty = self.data[idx]['数量']
-            change_amount = new_qty - current_qty
-            
-            if change_amount == 0:  # 数量没有变化
-                return
-                
-            # 记录操作信息
-            operation_type = "设置为" 
-            self.add_operation_record(idx, self.operator_var.get(), operation_type, new_qty, new_qty)
-                
-            self.data[idx]['数量'] = new_qty
-            self.save_data()
-            self.update_table()
-            
-            # 重新选择当前行
-            self.reselect_row(idx, new_qty)
-        except ValueError:
-            messagebox.showwarning('提示', '请输入有效的数字')
-    
-    def add_operation_record(self, idx, operator, operation_type, operation_amount, new_qty):
-        """添加操作记录"""
-        if '操作记录' not in self.data[idx]:
-            self.data[idx]['操作记录'] = []
-            
-        record = {
-            '时间': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            '操作者': operator,
-            '操作类型': operation_type,
-            '操作数量': operation_amount,
-            '操作后数量': new_qty
-        }
-        
-        self.data[idx]['操作记录'].append(record)
-    
-    def reselect_row(self, idx, qty):
-        """重新选择表格中的行"""
-        if idx < len(self.tree.get_children()):
-            item_id = self.tree.get_children()[idx]
-            self.tree.selection_set(item_id)
-            self.enable_quantity_controls(qty)
-
     def update_table(self):
         """更新表格数据显示"""
         search = self.search_var.get().lower()
@@ -332,168 +144,293 @@ class WarehouseManager:
             
         # 重新填充表格
         for item in self.data:
-            # 兼容没有标签字段的旧数据
-            tags = item.get('标签', [])
-            tags_str = ", ".join(tags)
-            
-            # 获取最近操作者列表
-            recent_operators = []
-            if '操作记录' in item and item['操作记录']:
-                # 从最新的记录开始，获取不重复的操作者
-                seen_operators = set()
-                for record in reversed(item['操作记录']):
-                    operator = record['操作者']
-                    if operator not in seen_operators:
-                        recent_operators.append(operator)
-                        seen_operators.add(operator)
-                    if len(recent_operators) >= 3:  # 只显示最近3个不同的操作者
-                        break
-            
-            recent_operators_str = ", ".join(recent_operators)
-            
             # 检查是否符合搜索条件
-            searchable_fields = [str(item['编号']), item['名称'], item['所属组织'], 
-                               str(item['数量']), item['入库日期'], tags_str, recent_operators_str]
+            searchable_fields = [
+                str(item.get('物资编号', '')), 
+                item.get('物品名称', ''), 
+                item.get('物资操作', ''),
+                item.get('所属组织', ''), 
+                str(item.get('物品数量', '')),
+                item.get('时间', ''),
+                item.get('操作人', ''),
+                item.get('提交者', ''),
+                item.get('提交时间', '')
+            ]
+            
             if search and not any(search in field.lower() for field in searchable_fields):
                 continue
                 
             self.tree.insert('', tk.END, values=(
-                item['编号'], item['名称'], item['所属组织'], 
-                item['数量'], item['入库日期'], tags_str, recent_operators_str))
+                item.get('物资编号', ''),
+                item.get('物品名称', ''),
+                item.get('物资操作', ''),
+                item.get('所属组织', ''),
+                item.get('物品数量', 0),
+                item.get('时间', ''),
+                item.get('操作人', ''),
+                item.get('提交者', ''),
+                item.get('提交时间', '')
+            ))
     
     def generate_new_id(self):
-        """生成新的两位数字编号（01-99）"""
-        used_ids = {item['编号'] for item in self.data}
-        for i in range(1, 100):
-            new_id = f"{i:02d}"  # 格式化为两位数字
-            if new_id not in used_ids:
-                return new_id
-        return None  # 如果所有编号都被使用了
-
-    def add_item(self):
-        """添加新物资"""
-        self.open_add_item_dialog()
+        """检查物资编号是否重复，不再自动生成"""
+        return None  # 返回None表示不自动生成ID
     
-    def open_add_item_dialog(self):
-        """打开添加物资对话框"""
+    def add_item(self):
+        """添加新物资（入库）"""
+        self.open_add_item_dialog('入库')
+    
+    def add_quantity(self, operation_type):
+        """增加物资数量"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning('提示', '请先选择物资')
+            return
+            
+        idx = self.tree.index(selected[0])
+        item = self.data[idx]
+        
+        # 打开对话框
+        self.open_operation_dialog(operation_type, idx)
+    
+    def open_operation_dialog(self, operation_type, idx=None):
+        """打开操作对话框，用于物资增添或部分出库"""
         win = tk.Toplevel(self.root)
-        win.title('添加物资')
-        win.geometry('400x550')  # 增加窗口大小以容纳操作者输入
+        win.title(operation_type)
+        win.geometry('300x350')
+        
+        # 如果是对现有物品操作
+        current_qty = 0
+        if idx is not None:
+            current_qty = self.data[idx].get('物品数量', 0)
+            item_name = self.data[idx].get('物品名称', '')
+            tk.Label(win, text=f'当前物品: {item_name}').grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky='w')
+            tk.Label(win, text=f'当前数量: {current_qty}').grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky='w')
+        
+        # 物资操作字段
+        tk.Label(win, text='物资操作').grid(row=2, column=0, padx=5, pady=5, sticky='w')
+        operation_var = tk.StringVar(value=operation_type)
+        operation_dropdown = ttk.Combobox(win, textvariable=operation_var, 
+                                         values=['入库', '出库', '物资增添', '部分出库'], 
+                                         state="readonly")
+        operation_dropdown.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
+        
+        # 数量输入
+        tk.Label(win, text='操作数量').grid(row=3, column=0, padx=5, pady=5, sticky='w')
+        qty_entry = tk.Entry(win)
+        qty_entry.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
+        if operation_type == '物资增添':
+            qty_entry.insert(0, '1')  # 默认为1
+        
+        # 时间输入
+        tk.Label(win, text='时间').grid(row=4, column=0, padx=5, pady=5, sticky='w')
+        time_entry = tk.Entry(win)
+        time_entry.grid(row=4, column=1, padx=5, pady=5, sticky='ew')
+        time_entry.insert(0, datetime.datetime.now().strftime('%Y-%m-%d %H:%M'))
+        
+        # 操作人输入
+        tk.Label(win, text='操作人').grid(row=5, column=0, padx=5, pady=5, sticky='w')
+        operator_var = tk.StringVar()
+        operator_entry = ttk.Combobox(win, textvariable=operator_var, values=self.operators)
+        operator_entry.grid(row=5, column=1, padx=5, pady=5, sticky='ew')
+        
+        # 提交者输入
+        tk.Label(win, text='提交者').grid(row=6, column=0, padx=5, pady=5, sticky='w')
+        submitter_var = tk.StringVar()
+        submitter_entry = ttk.Combobox(win, textvariable=submitter_var, values=self.operators)
+        submitter_entry.grid(row=6, column=1, padx=5, pady=5, sticky='ew')
+        
+        # 保存按钮
+        tk.Button(win, text='保存', 
+                 command=lambda: self.save_operation(
+                     win, operation_var.get(), idx, qty_entry, time_entry,
+                     operator_var, submitter_var, current_qty
+                 )).grid(row=7, column=0, columnspan=2, pady=10)
+    
+    def save_operation(self, win, operation_type, idx, qty_entry, time_entry, operator_var, submitter_var, current_qty):
+        """保存操作结果"""
+        try:
+            # 获取操作数量
+            try:
+                qty = int(qty_entry.get())
+                if qty <= 0:
+                    raise ValueError('操作数量必须大于0')
+            except ValueError:
+                raise ValueError('请输入有效的数量')
+            
+            # 获取时间
+            time_str = time_entry.get()
+            try:
+                datetime.datetime.strptime(time_str, '%Y-%m-%d %H:%M')
+            except ValueError:
+                raise ValueError('时间格式不正确，应为：年-月-日 时:分 (如 2023-05-16 14:30)')
+            
+            # 获取操作人和提交者
+            operator = operator_var.get().strip()
+            submitter = submitter_var.get().strip()
+            
+            if not operator:
+                raise ValueError('请输入操作人')
+            if not submitter:
+                raise ValueError('请输入提交者')
+            
+            # 根据操作类型处理
+            if operation_type == '物资增添':
+                # 增加物品数量
+                new_qty = current_qty + qty
+                self.data[idx]['物品数量'] = new_qty
+                self.data[idx]['物资操作'] = operation_type
+                self.data[idx]['操作人'] = operator
+                self.data[idx]['提交者'] = submitter
+                self.data[idx]['时间'] = time_str
+                self.data[idx]['提交时间'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                messagebox.showinfo('成功', f'已增加 {qty} 个物品，现有 {new_qty} 个')
+            
+            elif operation_type == '部分出库':
+                # 减少物品数量
+                if qty > current_qty:
+                    raise ValueError(f'出库数量不能超过当前库存 ({current_qty})')
+                
+                new_qty = current_qty - qty
+                self.data[idx]['物品数量'] = new_qty
+                self.data[idx]['物资操作'] = operation_type
+                self.data[idx]['操作人'] = operator
+                self.data[idx]['提交者'] = submitter
+                self.data[idx]['时间'] = time_str
+                self.data[idx]['提交时间'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                messagebox.showinfo('成功', f'已出库 {qty} 个物品，剩余 {new_qty} 个')
+            
+            self.save_data()
+            self.update_table()
+            win.destroy()
+            
+            # 更新操作者和提交者到配置
+            self.update_operators([operator, submitter])
+            
+        except Exception as e:
+            messagebox.showerror('错误', str(e))
+    
+    def open_add_item_dialog(self, operation_type):
+        """打开添加物资对话框（入库）"""
+        win = tk.Toplevel(self.root)
+        win.title(operation_type)
+        win.geometry('400x400')
         
         # 创建基本字段
-        tk.Label(win, text='编号').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+        tk.Label(win, text='物资编号').grid(row=0, column=0, padx=5, pady=5, sticky='w')
         entry_id = tk.Entry(win)
         entry_id.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
         
-        tk.Label(win, text='名称').grid(row=1, column=0, padx=5, pady=5, sticky='w')
+        # 添加标签提示
+        tk.Label(win, text='例如: A1-3-05, B2-5-13', fg='gray').grid(row=0, column=2, padx=5, pady=5, sticky='w')
+        
+        tk.Label(win, text='物品名称').grid(row=1, column=0, padx=5, pady=5, sticky='w')
         entry_name = tk.Entry(win)
         entry_name.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
         
-        tk.Label(win, text='所属组织').grid(row=2, column=0, padx=5, pady=5, sticky='w')
+        # 添加物资操作字段
+        tk.Label(win, text='物资操作').grid(row=2, column=0, padx=5, pady=5, sticky='w')
+        operation_var = tk.StringVar(value=operation_type)
+        operation_dropdown = ttk.Combobox(win, textvariable=operation_var, 
+                                         values=['入库', '出库', '物资增添', '部分出库'], 
+                                         state="readonly")
+        operation_dropdown.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
+        
+        tk.Label(win, text='所属组织').grid(row=3, column=0, padx=5, pady=5, sticky='w')
         # 使用下拉列表选择组织
         org_var = tk.StringVar()
         if self.organizations:
             org_var.set(self.organizations[0])
         org_dropdown = ttk.Combobox(win, textvariable=org_var, values=self.organizations, state="readonly")
-        org_dropdown.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
+        org_dropdown.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
         
-        tk.Label(win, text='数量').grid(row=3, column=0, padx=5, pady=5, sticky='w')
+        tk.Label(win, text='物品数量').grid(row=4, column=0, padx=5, pady=5, sticky='w')
         entry_count = tk.Entry(win)
-        entry_count.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
+        entry_count.grid(row=4, column=1, padx=5, pady=5, sticky='ew')
         
-        tk.Label(win, text='入库日期(YYYY-MM-DD)').grid(row=4, column=0, padx=5, pady=5, sticky='w')
+        tk.Label(win, text='时间').grid(row=5, column=0, padx=5, pady=5, sticky='w')
         entry_date = tk.Entry(win)
-        entry_date.grid(row=4, column=1, padx=5, pady=5, sticky='ew')
+        entry_date.grid(row=5, column=1, padx=5, pady=5, sticky='ew')
         
-        # 添加操作者输入
-        tk.Label(win, text='操作者').grid(row=5, column=0, padx=5, pady=5, sticky='w')
+        # 添加操作人输入
+        tk.Label(win, text='操作人').grid(row=6, column=0, padx=5, pady=5, sticky='w')
         operator_var = tk.StringVar()
         operator_entry = ttk.Combobox(win, textvariable=operator_var, values=self.operators)
-        operator_entry.grid(row=5, column=1, padx=5, pady=5, sticky='ew')
+        operator_entry.grid(row=6, column=1, padx=5, pady=5, sticky='ew')
         
-        # 标签选择
-        tk.Label(win, text='物品标签 (可多选)').grid(row=6, column=0, columnspan=2, padx=5, pady=5, sticky='w')
+        # 添加提交者输入
+        tk.Label(win, text='提交者').grid(row=7, column=0, padx=5, pady=5, sticky='w')
+        submitter_var = tk.StringVar()
+        submitter_entry = ttk.Combobox(win, textvariable=submitter_var, values=self.operators)
+        submitter_entry.grid(row=7, column=1, padx=5, pady=5, sticky='ew')
         
-        # 创建标签复选框
-        label_frame = tk.Frame(win)
-        label_frame.grid(row=7, column=0, columnspan=2, padx=5, pady=5, sticky='ew')
+        # 不再自动生成编号
         
-        label_vars = []
-        for i, label in enumerate(self.labels):
-            var = tk.BooleanVar()
-            cb = tk.Checkbutton(label_frame, text=label, variable=var)
-            cb.grid(row=i//2, column=i%2, sticky='w')
-            label_vars.append((label, var))
-        
-        # 自动生成编号并填入
-        new_id = self.generate_new_id()
-        if new_id:
-            entry_id.insert(0, new_id)
-            
-        # 默认填入当前日期
-        entry_date.insert(0, datetime.date.today().strftime('%Y-%m-%d'))
+        # 默认填入当前日期时间
+        now = datetime.datetime.now()
+        entry_date.insert(0, now.strftime('%Y-%m-%d %H:%M'))
         
         # 保存按钮
         tk.Button(win, text='保存', 
-                 command=lambda: self.save_new_item(win, entry_id, entry_name, 
-                                                   org_var, entry_count, entry_date, 
-                                                   operator_var, label_vars)
-                ).grid(row=8, column=0, columnspan=2, pady=10)
+                 command=lambda: self.save_new_item(
+                     win, entry_id, entry_name, operation_var, org_var, entry_count, entry_date,
+                     operator_var, submitter_var
+                 )).grid(row=8, column=0, columnspan=2, pady=10)
     
-    def save_new_item(self, win, entry_id, entry_name, org_var, entry_count, entry_date, operator_var, label_vars):
+    def save_new_item(self, win, entry_id, entry_name, operation_var, org_var, entry_count, entry_date, operator_var, submitter_var):
         """保存新添加的物资"""
         try:
-            item_id = entry_id.get()
+            item_id = entry_id.get().strip()
+            operation = operation_var.get()
             operator = operator_var.get().strip()
+            submitter = submitter_var.get().strip()
             
-            # 验证编号是否为两位数字
-            if not (item_id.isdigit() and len(item_id) == 2):
-                raise ValueError('编号必须是两位数字(01-99)')
+            # 验证编号是否为空
+            if not item_id:
+                raise ValueError('请输入物资编号')
             
             # 检查编号是否重复
-            if any(item['编号'] == item_id for item in self.data):
+            if any(item.get('物资编号') == item_id for item in self.data):
                 raise ValueError('编号已存在，请使用其他编号')
             
-            # 验证操作者是否填写
+            # 验证操作者和提交者是否填写
             if not operator:
-                raise ValueError('请输入操作者姓名')
+                raise ValueError('请输入操作人姓名')
                 
-            # 获取选中的标签
-            selected_labels = [label for label, var in label_vars if var.get()]
-            
+            if not submitter:
+                raise ValueError('请输入提交者姓名')
+                
             try:
                 count = int(entry_count.get())
-                if count < 0:
-                    raise ValueError('数量不能为负数')
+                if count <= 0:
+                    raise ValueError('数量必须大于0')
             except:
                 raise ValueError('请输入有效的数量')
             
+            now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             item = {
-                '编号': item_id,
-                '名称': entry_name.get(),
-                '所属组织': org_var.get(),
-                '数量': count,
-                '入库日期': entry_date.get(),
-                '标签': selected_labels,
-                '操作记录': []
+                "提交时间": now,
+                "物资编号": item_id,
+                "物品名称": entry_name.get(),
+                "物资操作": operation,
+                "所属组织": org_var.get(),
+                "物品数量": count,
+                "时间": entry_date.get(),
+                "操作人": operator,
+                "提交者": submitter
             }
             
             # 验证所有字段
-            if not item['编号'] or not item['名称'] or not item['所属组织'] or not item['入库日期']:
-                raise ValueError('编号、名称、所属组织和入库日期为必填项')
+            if not item['物资编号'] or not item['物品名称'] or not item['所属组织'] or not item['时间']:
+                raise ValueError('编号、名称、所属组织和时间为必填项')
                 
-            # 验证日期格式
-            datetime.datetime.strptime(item['入库日期'], '%Y-%m-%d')
-            
-            # 添加操作记录
-            record = {
-                '时间': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                '操作者': operator,
-                '操作类型': '新增物品',
-                '操作数量': count,
-                '操作后数量': count
-            }
-            item['操作记录'].append(record)
+            # 验证日期时间格式
+            try:
+                datetime.datetime.strptime(item['时间'], '%Y-%m-%d %H:%M')
+            except ValueError:
+                raise ValueError('时间格式不正确，应为：年-月-日 时:分 (如 2023-05-16 14:30)')
             
             # 添加并保存
             self.data.append(item)
@@ -501,97 +438,99 @@ class WarehouseManager:
             self.update_table()
             win.destroy()
             
-            # 如果操作者不在列表中，添加到配置
-            if operator and operator not in self.operators:
-                self.operators.append(operator)
-                self.save_operators_to_config()
+            # 更新操作者和提交者到配置
+            self.update_operators([operator, submitter])
             
         except Exception as e:
             messagebox.showerror('错误', str(e))
     
-    def save_operators_to_config(self):
-        """保存操作者列表到配置文件"""
-        if os.path.exists(self.config_file):
-            try:
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                
-                # 更新或添加操作者配置
-                if 'operators' not in config:
-                    config['operators'] = {
-                        'description': '操作者列表',
-                        'val': self.operators
-                    }
-                else:
-                    config['operators']['val'] = self.operators
-                
-                with open(self.config_file, 'w', encoding='utf-8') as f:
-                    json.dump(config, f, ensure_ascii=False, indent=4)
-            except Exception as e:
-                messagebox.showerror('配置保存错误', f'无法保存配置: {str(e)}')
-
-    def remove_item(self):
-        """出库物资"""
-        selected = self.tree.selection()
-        if not selected:
-            messagebox.showwarning('提示', '请先选择要出库的物资')
-            return
+    def open_complete_removal_dialog(self, idx):
+        """打开完全出库对话框"""
+        win = tk.Toplevel(self.root)
+        win.title('完全出库')
+        win.geometry('300x250')
         
-        # 验证操作者是否填写
-        if not self.validate_operator():
-            return
-        
-        idx = self.tree.index(selected[0])
         item = self.data[idx]
+        item_name = item.get('物品名称', '')
         
-        # 创建出库方式选择对话框
-        choice = messagebox.askyesnocancel('出库方式', '选择出库方式:\n是 - 部分出库\n否 - 完全出库\n取消 - 取消操作')
+        tk.Label(win, text=f'物品: {item_name}').grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky='w')
         
-        if choice is None:  # 用户点击了取消
-            return
-        elif choice:  # 用户选择部分出库
-            self.remove_item_partially(idx, item)
-        else:  # 用户选择完全出库
-            self.remove_item_completely(idx)
+        # 物资操作字段
+        tk.Label(win, text='物资操作').grid(row=1, column=0, padx=5, pady=5, sticky='w')
+        operation_var = tk.StringVar(value='出库')
+        operation_dropdown = ttk.Combobox(win, textvariable=operation_var, 
+                                         values=['出库'], 
+                                         state="readonly")
+        operation_dropdown.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
+        
+        # 时间输入
+        tk.Label(win, text='时间').grid(row=2, column=0, padx=5, pady=5, sticky='w')
+        time_entry = tk.Entry(win)
+        time_entry.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
+        time_entry.insert(0, datetime.datetime.now().strftime('%Y-%m-%d %H:%M'))
+        
+        # 操作人输入
+        tk.Label(win, text='操作人').grid(row=3, column=0, padx=5, pady=5, sticky='w')
+        operator_var = tk.StringVar()
+        operator_entry = ttk.Combobox(win, textvariable=operator_var, values=self.operators)
+        operator_entry.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
+        
+        # 提交者输入
+        tk.Label(win, text='提交者').grid(row=4, column=0, padx=5, pady=5, sticky='w')
+        submitter_var = tk.StringVar()
+        submitter_entry = ttk.Combobox(win, textvariable=submitter_var, values=self.operators)
+        submitter_entry.grid(row=4, column=1, padx=5, pady=5, sticky='ew')
+        
+        # 确认按钮
+        tk.Button(win, text='确认出库', 
+                 command=lambda: self.complete_item_removal(
+                     win, idx, time_entry, operator_var, submitter_var
+                 )).grid(row=5, column=0, columnspan=2, pady=10)
     
-    def remove_item_partially(self, idx, item):
-        """部分出库处理"""
-        current_qty = item['数量']
-        out_qty = simpledialog.askinteger('部分出库', 
-                                         f'当前库存: {current_qty}\n请输入要出库的数量:', 
-                                         minvalue=1, maxvalue=current_qty)
-        
-        if out_qty is None:  # 用户取消输入
-            return
+    def complete_item_removal(self, win, idx, time_entry, operator_var, submitter_var):
+        """完成物品完全出库"""
+        try:
+            # 获取时间
+            time_str = time_entry.get()
+            try:
+                datetime.datetime.strptime(time_str, '%Y-%m-%d %H:%M')
+            except ValueError:
+                raise ValueError('时间格式不正确，应为：年-月-日 时:分 (如 2023-05-16 14:30)')
+                
+            operator = operator_var.get().strip()
+            submitter = submitter_var.get().strip()
             
-        if out_qty == current_qty:  # 如果出库数量等于当前库存，完全出库
-            self.remove_item_completely(idx)
-        else:  # 部分出库
-            operator = self.operator_var.get()
+            if not operator:
+                raise ValueError('请输入操作人')
+            if not submitter:
+                raise ValueError('请输入提交者')
             
-            # 记录操作信息
-            self.add_operation_record(idx, operator, "出库", out_qty, current_qty - out_qty)
-            
-            self.data[idx]['数量'] = current_qty - out_qty
-            self.save_data()
-            messagebox.showinfo('出库成功', f'已出库 {out_qty} 个 {item["名称"]}，剩余 {current_qty - out_qty} 个。')
-            self.update_table()
-            
-    def remove_item_completely(self, idx):
-        """完全出库处理"""
-        if messagebox.askyesno('确认', '确定要将该物资完全出库吗？'):
-            operator = self.operator_var.get()
+            # 记录物品出库信息
             item = self.data[idx]
+            item['物资操作'] = '出库'
+            item['操作人'] = operator
+            item['提交者'] = submitter
+            item['时间'] = time_str
+            item['提交时间'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # 记录到操作历史文件
-            self.log_operation_to_file(item, operator, "完全出库", item['数量'], 0)
+            # 记录日志
+            self.log_operation_to_file(item, operator, submitter, "完全出库")
             
+            # 删除物品
             del self.data[idx]
             self.save_data()
             self.update_table()
-            messagebox.showinfo('出库成功', '物资已完全出库！')
             
-    def log_operation_to_file(self, item, operator, operation, amount, new_qty):
+            messagebox.showinfo('出库成功', '物资已完全出库！')
+            win.destroy()
+            
+            # 更新操作者和提交者到配置
+            self.update_operators([operator, submitter])
+            
+        except Exception as e:
+            messagebox.showerror('错误', str(e))
+    
+    def log_operation_to_file(self, item, operator, submitter, operation_type):
         """记录操作到历史文件"""
         now = datetime.datetime.now()
         log_dir = os.path.join(self.data_dir, 'logs')
@@ -601,25 +540,175 @@ class WarehouseManager:
         log_file = os.path.join(log_dir, f'operation_log_{now.strftime("%Y%m")}.txt')
         
         log_entry = (f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] "
-                    f"操作者: {operator}, 物品: {item['名称']}(编号:{item['编号']}), "
-                    f"操作: {operation}, 数量: {amount}, 剩余: {new_qty}\n")
+                    f"操作: {operation_type}, 操作人: {operator}, 提交者: {submitter}, "
+                    f"物品: {item.get('物品名称', '')}(编号:{item.get('物资编号', '')}), "
+                    f"数量: {item.get('物品数量', 0)}\n")
         
         with open(log_file, 'a', encoding='utf-8') as f:
             f.write(log_entry)
 
     def sort_by(self, col, reverse):
         """按列排序表格数据"""
-        col_map = {
-            '编号': '编号', '名称': '名称', '所属组织': '所属组织', 
-            '数量': '数量', '入库日期': '入库日期'
+        column_map = {
+            '物资编号': '物资编号', 
+            '物品名称': '物品名称',
+            '物资操作': '物资操作', 
+            '所属组织': '所属组织', 
+            '物品数量': '物品数量', 
+            '时间': '时间',
+            '操作人': '操作人',
+            '提交者': '提交者',
+            '提交时间': '提交时间'
         }
         
-        if col in col_map:
-            self.data.sort(key=lambda x: x[col_map[col]], reverse=reverse)
+        if col in column_map:
+            # 按照指定列排序
+            key = column_map[col]
+            self.data.sort(key=lambda x: x.get(key, ''), reverse=reverse)
             self.update_table()
             # 下次点击反向排序
             self.tree.heading(col, command=lambda: self.sort_by(col, not reverse))
-
+    
+    def import_excel(self):
+        """从Excel导入数据"""
+        file_path = filedialog.askopenfilename(
+            filetypes=[('Excel文件', '*.xlsx *.xls')],
+            title='选择要导入的Excel文件'
+        )
+        
+        if not file_path:
+            return
+            
+        try:
+            # 打开Excel文件
+            wb = openpyxl.load_workbook(file_path)
+            ws = wb.active
+            
+            # 获取表头行
+            headers = [str(cell.value) if cell.value else "" for cell in ws[1]]
+            
+            # 通过相似度匹配表头
+            required_headers = ['物资编号', '物品名称', '物资操作', '所属组织', '物品数量', '时间', '操作人', '提交者']
+            header_mapping = self.match_headers(headers, required_headers)
+            
+            missing_headers = [h for h in required_headers if h not in header_mapping]
+            
+            if missing_headers:
+                messagebox.showerror('导入错误', f'Excel文件缺少必要的列: {", ".join(missing_headers)}')
+                return
+                
+            # 读取数据
+            new_items = []
+            invalid_rows = []
+            for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+                try:
+                    # 获取单元格值
+                    item_id = str(row[header_mapping['物资编号']].value or '').strip()
+                    
+                    # 读取基本信息
+                    item_name = str(row[header_mapping['物品名称']].value or '')
+                    operation = str(row[header_mapping['物资操作']].value or '入库')
+                    organization = str(row[header_mapping['所属组织']].value or '')
+                    
+                    # 读取数量并验证
+                    qty_cell = row[header_mapping['物品数量']].value
+                    try:
+                        quantity = int(qty_cell)
+                        if quantity <= 0:
+                            raise ValueError('数量必须大于0')
+                    except (ValueError, TypeError):
+                        invalid_rows.append(f'第{row_idx}行: 无效的数量')
+                        continue
+                    
+                    # 读取时间
+                    time_cell = row[header_mapping['时间']].value
+                    if isinstance(time_cell, datetime.datetime):
+                        item_time = time_cell.strftime('%Y-%m-%d %H:%M')
+                    elif isinstance(time_cell, str):
+                        try:
+                            datetime.datetime.strptime(time_cell, '%Y-%m-%d %H:%M')
+                            item_time = time_cell
+                        except ValueError:
+                            invalid_rows.append(f'第{row_idx}行: 时间格式不正确')
+                            continue
+                    else:
+                        item_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+                    
+                    # 操作人和提交者
+                    operator = str(row[header_mapping['操作人']].value or '')
+                    submitter = str(row[header_mapping['提交者']].value or '')
+                    
+                    # 验证必填字段
+                    if not (item_id and item_name and organization):
+                        invalid_rows.append(f'第{row_idx}行: 缺少必填字段')
+                        continue
+                    
+                    # 验证编号是否为空
+                    if not item_id:
+                        invalid_rows.append(f'第{row_idx}行: 物资编号不能为空')
+                        continue
+                    
+                    # 创建物资记录
+                    new_item = {
+                        "提交时间": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        "物资编号": item_id,
+                        "物品名称": item_name,
+                        "物资操作": operation,
+                        "所属组织": organization,
+                        "物品数量": quantity,
+                        "时间": item_time,
+                        "操作人": operator,
+                        "提交者": submitter
+                    }
+                    
+                    new_items.append(new_item)
+                    
+                except Exception as e:
+                    invalid_rows.append(f'第{row_idx}行: {str(e)}')
+            
+            if invalid_rows:
+                messagebox.showwarning('导入警告', 
+                                      f'有{len(invalid_rows)}行数据格式不正确，已跳过:\n' + 
+                                      '\n'.join(invalid_rows[:10]) +
+                                      (f'\n...等共{len(invalid_rows)}个错误' if len(invalid_rows) > 10 else ''))
+            
+            if new_items:
+                # 检查编号重复
+                existing_ids = {item.get('物资编号') for item in self.data}
+                duplicates = [item for item in new_items if item['物资编号'] in existing_ids]
+                
+                if duplicates:
+                    if messagebox.askyesno('编号重复', 
+                                         f'有{len(duplicates)}个物资编号与现有物资重复，是否覆盖现有数据？'):
+                        # 删除重复的物资
+                        dup_ids = {item['物资编号'] for item in duplicates}
+                        self.data = [item for item in self.data if item.get('物资编号') not in dup_ids]
+                    else:
+                        # 不覆盖，只保留不重复的
+                        new_items = [item for item in new_items if item['物资编号'] not in existing_ids]
+                
+                # 添加新物资
+                self.data.extend(new_items)
+                self.save_data()
+                self.update_table()
+                
+                # 更新操作人和提交者列表
+                operators = set()
+                for item in new_items:
+                    if item.get('操作人'):
+                        operators.add(item['操作人'])
+                    if item.get('提交者'):
+                        operators.add(item['提交者'])
+                
+                self.update_operators(operators)
+                
+                messagebox.showinfo('导入成功', f'成功导入{len(new_items)}个物资记录')
+            else:
+                messagebox.showinfo('导入结果', '没有有效的物资记录被导入')
+                
+        except Exception as e:
+            messagebox.showerror('导入错误', f'导入Excel时发生错误: {str(e)}')
+    
     def export_excel(self):
         """导出数据为Excel文件"""
         if not self.data:
@@ -642,10 +731,6 @@ class WarehouseManager:
             
         # 创建Excel文件
         self.create_excel_file(file_path)
-        
-        # 导出操作记录到文本文件
-        txt_file_path = os.path.splitext(file_path)[0] + "_操作记录.txt"
-        self.export_operation_history(txt_file_path)
     
     def create_excel_file(self, file_path):
         """创建Excel文件"""
@@ -654,72 +739,117 @@ class WarehouseManager:
         ws.title = "仓库物资"
         
         # 添加表头
-        ws.append(['编号', '名称', '所属组织', '数量', '入库日期', '标签', '最近操作者'])
+        headers = ['提交时间', '物资编号', '物品名称', '物资操作', '所属组织', '物品数量', '时间', '操作人', '提交者']
+        ws.append(headers)
         
         for item in self.data:
-            # 兼容没有标签字段的旧数据
-            tags = item.get('标签', [])
-            tags_str = ", ".join(tags)
-            
-            # 获取最近操作者
-            recent_operators = []
-            if '操作记录' in item and item['操作记录']:
-                seen_operators = set()
-                for record in reversed(item['操作记录']):
-                    operator = record['操作者']
-                    if operator not in seen_operators:
-                        recent_operators.append(operator)
-                        seen_operators.add(operator)
-                    if len(recent_operators) >= 3:
-                        break
-                        
-            recent_operators_str = ", ".join(recent_operators)
-            
-            ws.append([
-                item['编号'], item['名称'], item['所属组织'], 
-                item['数量'], item['入库日期'], tags_str, recent_operators_str
-            ])
-        
-        # 添加操作记录工作表
-        ws_history = wb.create_sheet(title="操作记录")
-        ws_history.append(['编号', '名称', '时间', '操作者', '操作类型', '操作数量', '操作后数量'])
-        
-        for item in self.data:
-            if '操作记录' in item and item['操作记录']:
-                for record in item['操作记录']:
-                    ws_history.append([
-                        item['编号'], item['名称'], 
-                        record['时间'], record['操作者'], record['操作类型'],
-                        record['操作数量'], record['操作后数量']
-                    ])
+            row_data = [
+                item.get('提交时间', ''),
+                item.get('物资编号', ''),
+                item.get('物品名称', ''),
+                item.get('物资操作', ''),
+                item.get('所属组织', ''),
+                item.get('物品数量', 0),
+                item.get('时间', ''),
+                item.get('操作人', ''),
+                item.get('提交者', '')
+            ]
+            ws.append(row_data)
         
         wb.save(file_path)
         messagebox.showinfo('导出成功', f'数据已导出到 {file_path}')
     
-    def export_operation_history(self, file_path):
-        """导出操作记录到文本文件"""
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write("仓库物资操作记录\n")
-            f.write("=" * 50 + "\n\n")
-            
-            for item in self.data:
-                f.write(f"物品: {item['名称']} (编号: {item['编号']})\n")
-                f.write("-" * 30 + "\n")
-                
-                if '操作记录' in item and item['操作记录']:
-                    for record in reversed(item['操作记录']):  # 从新到旧
-                        f.write(f"时间: {record['时间']}\n")
-                        f.write(f"操作者: {record['操作者']}\n")
-                        f.write(f"操作: {record['操作类型']} {record['操作数量']}\n")
-                        f.write(f"操作后数量: {record['操作后数量']}\n")
-                        f.write("-" * 20 + "\n")
-                else:
-                    f.write("暂无操作记录\n")
-                
-                f.write("\n")
+    def match_headers(self, actual_headers, required_headers):
+        """匹配表头，返回匹配的列索引映射
         
-        messagebox.showinfo('导出成功', f'操作记录已导出到 {file_path}')
+        Args:
+            actual_headers: 实际的Excel表头列表
+            required_headers: 需要的表头列表
+            
+        Returns:
+            字典 {需要的表头: 对应的列索引}
+        """
+        header_mapping = {}
+        
+        # 清理表头（去除括号和其中的内容）
+        cleaned_headers = [self.clean_header(header) for header in actual_headers]
+        
+        # 对每个需要的表头，找到最匹配的实际表头
+        for req_header in required_headers:
+            best_match = None
+            best_score = -1
+            
+            for idx, (raw_header, clean_header) in enumerate(zip(actual_headers, cleaned_headers)):
+                # 如果完全匹配（清理后）
+                if clean_header == req_header:
+                    best_match = idx
+                    break
+                
+                # 简单相似度评分：包含关系
+                if req_header in clean_header:
+                    score = len(req_header) / len(clean_header) if clean_header else 0
+                    if score > best_score:
+                        best_score = score
+                        best_match = idx
+            
+            # 如果找到匹配
+            if best_match is not None:
+                header_mapping[req_header] = best_match
+        
+        return header_mapping
+    
+    def clean_header(self, header):
+        """清理表头，去除括号及其内容"""
+        if not header:
+            return ""
+        # 去除（...）内容
+        import re
+        return re.sub(r'（.*?）', '', header).strip()
 
+    def remove_item(self, operation_type):
+        """移除物资（出库或部分出库）"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning('提示', '请先选择物资')
+            return
+            
+        idx = self.tree.index(selected[0])
+        if operation_type == '出库':
+            self.open_complete_removal_dialog(idx)
+        else:  # 部分出库
+            self.open_operation_dialog(operation_type, idx)
+    
+    def update_operators(self, new_operators):
+        """更新操作者列表并保存到配置"""
+        # 转换为集合以去重
+        operators_set = set(self.operators)
+        
+        # 添加新操作者
+        for operator in new_operators:
+            if operator and operator not in operators_set:
+                self.operators.append(operator)
+                operators_set.add(operator)
+        
+        # 保存到配置文件
+        self.save_config()
+
+    def save_config(self):
+        """保存配置到文件"""
+        config = {
+            "organization": {
+                "val": self.organizations
+            },
+            "operators": {
+                "val": self.operators
+            }
+        }
+        
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            messagebox.showerror('配置保存错误', f'无法保存配置: {str(e)}')
+    
 if __name__ == '__main__':
     root = tk.Tk()
     app = WarehouseManager(root)

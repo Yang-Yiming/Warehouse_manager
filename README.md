@@ -1,5 +1,9 @@
 # 仓库物资管理系统
 
+>[!warning]
+>A miniprogram and modern version is [here](https://github.com/Yang-Yiming/Zhicheng-Warehouse-Manager).
+>This version is archieved.
+
 一个基于 Tkinter 的简单仓库物资管理小程序，用于南方科技大学致诚书院的仓库管理。支持物资的入库、出库、搜索、排序和导出/导入 Excel。
 
 虽然说功能真的很简陋和excel并没有太大区别，但是一定还是有一丢丢用的（确信）
